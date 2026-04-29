@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createArtifactParser } from '../artifacts/parser';
 import { useT } from '../i18n';
-import { streamMessage as streamAnthropic } from '../providers/anthropic';
-import { streamMessage as streamOpenAI } from '../providers/openai';
+import { streamMessage as streamAnthropic, type AnthropicStreamHandlers } from '../providers/anthropic';
+import { streamMessage as streamOpenAI, type OpenAIStreamHandlers } from '../providers/openai';
 import { streamViaDaemon } from '../providers/daemon';
 import {
   fetchDesignSystem,
@@ -509,16 +509,32 @@ export function ProjectView({
           reasoning: choice?.reasoning ?? null,
         });
       } else {
-        const streamMessage = config.provider === 'openai' ? streamOpenAI : streamAnthropic;
         pushEvent({ kind: 'status', label: 'requesting', detail: config.model });
-        void streamMessage(config, systemPrompt, nextHistory, controller.signal, {
-          onDelta: (delta) => {
-            handlers.onDelta(delta);
-            handlers.onAgentEvent({ kind: 'text', text: delta });
-          },
-          onDone: handlers.onDone,
-          onError: handlers.onError,
-        });
+        if (config.provider === 'openai') {
+          const openaiHandlers: OpenAIStreamHandlers = {
+            onDelta: (delta) => {
+              handlers.onDelta(delta);
+              handlers.onAgentEvent({ kind: 'text', text: delta });
+            },
+            onDone: handlers.onDone,
+            onError: handlers.onError,
+            onAgentEvent: handlers.onAgentEvent,
+            projectId: project.id,
+          };
+          void streamOpenAI(config, systemPrompt, nextHistory, controller.signal, openaiHandlers);
+        } else {
+          const anthropicHandlers: AnthropicStreamHandlers = {
+            onDelta: (delta) => {
+              handlers.onDelta(delta);
+              handlers.onAgentEvent({ kind: 'text', text: delta });
+            },
+            onDone: handlers.onDone,
+            onError: handlers.onError,
+            onAgentEvent: handlers.onAgentEvent,
+            projectId: project.id,
+          };
+          void streamAnthropic(config, systemPrompt, nextHistory, controller.signal, anthropicHandlers);
+        }
       }
     },
     [

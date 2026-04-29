@@ -257,6 +257,61 @@ function repairUnescapedQuotes(input: string): string {
   return out.join('');
 }
 
+function repairMissingColons(input: string): string {
+  let out = '';
+  let i = 0;
+  while (i < input.length) {
+    if (input[i] === '"') {
+      const start = i;
+      i++;
+      while (i < input.length && input[i] !== '"') {
+        i++;
+      }
+      if (i < input.length) {
+        i++;
+      }
+      const quoted = input.slice(start, i);
+      if (i < input.length) {
+        const nextNonSpace = input.slice(i).match(/^\s*/);
+        const spaceAfter = nextNonSpace ? nextNonSpace[0].length : 0;
+        const nextCharIdx = i + spaceAfter;
+        const nextChar = input[nextCharIdx];
+        const prevNonSpace = out.trimEnd().slice(-1);
+        if (
+          nextChar &&
+          nextChar !== ':' &&
+          nextChar !== ',' &&
+          nextChar !== ']' &&
+          nextChar !== '}' &&
+          nextChar !== '"' &&
+          prevNonSpace !== ':' &&
+          prevNonSpace !== ',' &&
+          prevNonSpace !== '['
+        ) {
+          const keyContent = quoted.slice(1, -1).trim();
+          out += `"${keyContent}": "`;
+          const rest = input.slice(nextCharIdx);
+          const endQuoteIdx = rest.indexOf('"');
+          if (endQuoteIdx !== -1) {
+            out += rest.slice(0, endQuoteIdx);
+            i = nextCharIdx + endQuoteIdx + 1;
+            out += '"';
+          } else {
+            out += rest;
+            i = input.length;
+          }
+          continue;
+        }
+      }
+      out += quoted;
+      continue;
+    }
+    out += input[i];
+    i++;
+  }
+  return out;
+}
+
 function tryParseLenient(body: string, attrs: Record<string, string>): QuestionForm | null {
   const trimmed = body.trim();
   if (!trimmed) return null;
@@ -272,6 +327,7 @@ function tryParseLenient(body: string, attrs: Record<string, string>): QuestionF
   const fixes = [
     (s: string) => s.replace(/,\s*([}\]])/g, '$1'),
     (s: string) => s.replace(/'/g, '"'),
+    (s: string) => repairMissingColons(s),
   ];
   for (const fix of fixes) {
     const candidate = repairUnescapedQuotes(fix(stripped));
