@@ -97,8 +97,17 @@ export function splitOnQuestionForms(input: string): FormSegment[] {
     const openEnd = openStart + m[0].length;
     const closeIdx = input.indexOf(CLOSE_TAG, openEnd);
     if (closeIdx === -1) {
-      // Unterminated — leave the rest as prose so we don't swallow it.
-      out.push({ kind: 'text', text: slice });
+      if (openStart > cursor) {
+        out.push({ kind: 'text', text: input.slice(cursor, openStart) });
+      }
+      const body = input.slice(openEnd);
+      const attrs = parseAttrs(m[1] ?? '');
+      const form = tryParseForm(body, attrs) ?? tryParseLenient(body, attrs) ?? tryParseFormRecovery(body, attrs);
+      if (form) {
+        out.push({ kind: 'form', form, raw: input.slice(openStart) });
+      } else {
+        out.push({ kind: 'text', text: slice });
+      }
       break;
     }
     if (openStart > cursor) {
@@ -106,11 +115,13 @@ export function splitOnQuestionForms(input: string): FormSegment[] {
     }
     const body = input.slice(openEnd, closeIdx);
     const attrs = parseAttrs(m[1] ?? '');
-    const form = tryParseForm(body, attrs);
+    const form =
+      tryParseForm(body, attrs) ??
+      tryParseLenient(body, attrs) ??
+      tryParseFormRecovery(body, attrs);
     if (form) {
       out.push({ kind: 'form', form, raw: input.slice(openStart, closeIdx + CLOSE_TAG.length) });
     } else {
-      // Malformed — keep raw text so the user can still see it.
       out.push({ kind: 'text', text: input.slice(openStart, closeIdx + CLOSE_TAG.length) });
     }
     cursor = closeIdx + CLOSE_TAG.length;
@@ -197,6 +208,115 @@ function tryParseForm(body: string, attrs: Record<string, string>): QuestionForm
     ...(description ? { description } : {}),
     ...(submitLabel ? { submitLabel } : {}),
   };
+}
+
+function repairUnescapedQuotes(input: string): string {
+  const out: string[] = [];
+  let i = 0;
+  let inString = false;
+
+  while (i < input.length) {
+    const ch = input[i]!;
+    if (inString) {
+      if (ch === '\\') {
+        out.push(ch, input[i + 1] ?? '');
+        i += 2;
+        continue;
+      }
+      if (ch === '"') {
+        const rest = input.slice(i + 1).trimStart();
+        const first = rest[0];
+        if (!first || first === ',' || first === '}' || first === ']' || first === ':') {
+          out.push('"');
+          inString = false;
+          i++;
+          continue;
+        }
+        if (first === '"') {
+          const afterSecond = rest.slice(1).trimStart();
+          const next = afterSecond[0];
+          if (next && /[\w\u4e00-\u9fff]/.test(next)) {
+            out.push('"');
+            inString = false;
+            i++;
+            continue;
+          }
+        }
+        out.push('\\"');
+        i++;
+        continue;
+      }
+      out.push(ch);
+      i++;
+    } else {
+      out.push(ch);
+      if (ch === '"') inString = true;
+      i++;
+    }
+  }
+  return out.join('');
+}
+
+function tryParseLenient(body: string, attrs: Record<string, string>): QuestionForm | null {
+  const trimmed = body.trim();
+  if (!trimmed) return null;
+  const stripped = trimmed
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+  const repaired = repairUnescapedQuotes(stripped);
+  if (repaired !== stripped) {
+    const form = tryParseForm(repaired, attrs);
+    if (form) return form;
+  }
+  const fixes = [
+    (s: string) => s.replace(/,\s*([}\]])/g, '$1'),
+    (s: string) => s.replace(/'/g, '"'),
+  ];
+  for (const fix of fixes) {
+    const candidate = repairUnescapedQuotes(fix(stripped));
+    if (candidate === stripped) continue;
+    const form = tryParseForm(candidate, attrs);
+    if (form) return form;
+  }
+  return null;
+}
+
+function tryParseFormRecovery(body: string, attrs: Record<string, string>): QuestionForm | null {
+  const trimmed = body.trim();
+  if (!trimmed) return null;
+  const stripped = trimmed
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+  let fixed = stripped;
+  for (let depth = 0; depth < 20; depth++) {
+    try {
+      JSON.parse(fixed);
+      break;
+    } catch {
+      const lastBrace = fixed.lastIndexOf('}');
+      const lastBracket = fixed.lastIndexOf(']');
+      const cutAt = Math.max(lastBrace, lastBracket);
+      if (cutAt <= 0) return null;
+      fixed = fixed.slice(0, cutAt + 1);
+      let openBraces = 0;
+      let openBrackets = 0;
+      for (const ch of fixed) {
+        if (ch === '{') openBraces++;
+        else if (ch === '}') openBraces--;
+        else if (ch === '[') openBrackets++;
+        else if (ch === ']') openBrackets--;
+      }
+      fixed += ']'.repeat(Math.max(0, openBrackets)) + '}'.repeat(Math.max(0, openBraces));
+    }
+  }
+  try {
+    JSON.parse(fixed);
+  } catch {
+    return null;
+  }
+  return tryParseForm(fixed, attrs);
 }
 
 function normalizeType(raw: unknown): QuestionType {

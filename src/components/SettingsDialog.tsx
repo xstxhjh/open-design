@@ -7,7 +7,7 @@ import {
   isCustomModel,
   renderModelOptions,
 } from './modelOptions';
-import type { AgentInfo, AppConfig, ExecMode } from '../types';
+import type { AgentInfo, AppConfig, ApiProvider, ExecMode } from '../types';
 
 interface Props {
   initial: AppConfig;
@@ -296,6 +296,28 @@ export function SettingsDialog({
             <div className="section-head">
               <h3>{t('settings.apiSection')}</h3>
             </div>
+            <label className="field">
+              <span className="field-label">{t('settings.provider')}</span>
+              <select
+                value={cfg.provider || 'anthropic'}
+                onChange={(e) => {
+                  const provider = e.target.value as ApiProvider;
+                  setCfg((c) => ({
+                    ...c,
+                    provider,
+                    baseUrl:
+                      provider === 'anthropic'
+                        ? 'https://api.anthropic.com'
+                        : c.baseUrl === 'https://api.anthropic.com'
+                          ? ''
+                          : c.baseUrl,
+                  }));
+                }}
+              >
+                <option value="anthropic">{t('settings.providerAnthropic')}</option>
+                <option value="openai">{t('settings.providerOpenai')}</option>
+              </select>
+            </label>
             <label className="field">
               <span className="field-label">{t('settings.apiKey')}</span>
               <div className="field-row">

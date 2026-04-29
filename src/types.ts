@@ -1,4 +1,5 @@
 export type ExecMode = 'daemon' | 'api';
+export type ApiProvider = 'anthropic' | 'openai';
 
 // Per-CLI model + reasoning the user picked in the model menu. Each agent
 // keeps its own slot so flipping between Codex and Gemini doesn't reset the
@@ -11,6 +12,7 @@ export interface AgentModelChoice {
 
 export interface AppConfig {
   mode: ExecMode;
+  provider: ApiProvider;
   apiKey: string;
   baseUrl: string;
   model: string;

@@ -77,6 +77,9 @@ export interface Dict {
   'settings.rescanTitle': string;
   'settings.noAgentsDetected': string;
   'settings.apiSection': string;
+  'settings.provider': string;
+  'settings.providerAnthropic': string;
+  'settings.providerOpenai': string;
   'settings.apiKey': string;
   'settings.showKey': string;
   'settings.hideKey': string;

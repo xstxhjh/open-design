@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createArtifactParser } from '../artifacts/parser';
 import { useT } from '../i18n';
-import { streamMessage } from '../providers/anthropic';
+import { streamMessage as streamAnthropic } from '../providers/anthropic';
+import { streamMessage as streamOpenAI } from '../providers/openai';
 import { streamViaDaemon } from '../providers/daemon';
 import {
   fetchDesignSystem,
@@ -508,6 +509,7 @@ export function ProjectView({
           reasoning: choice?.reasoning ?? null,
         });
       } else {
+        const streamMessage = config.provider === 'openai' ? streamOpenAI : streamAnthropic;
         pushEvent({ kind: 'status', label: 'requesting', detail: config.model });
         void streamMessage(config, systemPrompt, nextHistory, controller.signal, {
           onDelta: (delta) => {

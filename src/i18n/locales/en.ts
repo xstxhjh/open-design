@@ -65,7 +65,10 @@ export const en: Dict = {
   'settings.rescanTitle': 'Re-scan PATH',
   'settings.noAgentsDetected':
     'No agents detected yet. Install one of Claude Code, Codex, Gemini CLI, OpenCode, Cursor Agent, Qwen, or GitHub Copilot CLI, then click Rescan.',
-  'settings.apiSection': 'Anthropic API',
+  'settings.apiSection': 'API Settings',
+  'settings.provider': 'Provider',
+  'settings.providerAnthropic': 'Anthropic',
+  'settings.providerOpenai': 'OpenAI compatible',
   'settings.apiKey': 'API key',
   'settings.showKey': 'Show key',
   'settings.hideKey': 'Hide key',
