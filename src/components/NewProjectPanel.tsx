@@ -140,12 +140,13 @@ export function NewProjectPanel({
   }
 
   return (
-    <div className="newproj">
+    <div className="newproj" data-testid="new-project-panel">
       <div className="newproj-tabs" role="tablist">
         {(Object.keys(TAB_LABEL_KEYS) as CreateTab[]).map((entry) => (
           <button
             key={entry}
             role="tab"
+            data-testid={`new-project-tab-${entry}`}
             aria-selected={tab === entry}
             className={`newproj-tab ${tab === entry ? 'active' : ''}`}
             onClick={() => setTab(entry)}
@@ -159,6 +160,7 @@ export function NewProjectPanel({
 
         <input
           className="newproj-name"
+          data-testid="new-project-name"
           placeholder={t('newproj.namePlaceholder')}
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -205,6 +207,7 @@ export function NewProjectPanel({
 
         <button
           className="primary newproj-create"
+          data-testid="create-project"
           onClick={handleCreate}
           disabled={!canCreate}
           title={
@@ -574,10 +577,11 @@ function DesignSystemPicker({
   }
 
   return (
-    <div className="newproj-section ds-picker" ref={wrapRef}>
+    <div className="newproj-section ds-picker" data-testid="design-system-picker" ref={wrapRef}>
       <label className="newproj-label">{t('newproj.designSystem')}</label>
       <button
         type="button"
+        data-testid="design-system-trigger"
         className={`ds-picker-trigger${open ? ' open' : ''}${primary ? '' : ' empty'}`}
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
@@ -611,6 +615,7 @@ function DesignSystemPicker({
           <div className="ds-picker-head">
             <input
               ref={searchRef}
+              data-testid="design-system-search"
               className="ds-picker-search"
               placeholder={t('newproj.dsSearch')}
               value={query}

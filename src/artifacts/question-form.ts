@@ -61,6 +61,8 @@ export interface FormQuestion {
   required?: boolean;
   help?: string;
   defaultValue?: string | string[];
+  /** Only applies when `type === 'checkbox'`. Caps the number of selected options. */
+  maxSelections?: number;
   /** Only present when `type === 'direction-cards'`. Mapped to options by `id`. */
   cards?: DirectionCard[];
 }
@@ -174,6 +176,12 @@ function tryParseForm(body: string, attrs: Record<string, string>): QuestionForm
     const placeholder = typeof qo.placeholder === 'string' ? qo.placeholder : undefined;
     const help = typeof qo.help === 'string' ? qo.help : undefined;
     const required = qo.required === true;
+    const maxSelections =
+      typeof qo.maxSelections === 'number' &&
+      Number.isInteger(qo.maxSelections) &&
+      qo.maxSelections > 0
+        ? qo.maxSelections
+        : undefined;
     const cards = parseDirectionCards(qo.cards);
     const defaultValue =
       typeof qo.defaultValue === 'string'
@@ -192,6 +200,7 @@ function tryParseForm(body: string, attrs: Record<string, string>): QuestionForm
       ...(help ? { help } : {}),
       ...(required ? { required } : {}),
       ...(defaultValue !== undefined ? { defaultValue } : {}),
+      ...(maxSelections !== undefined && type === 'checkbox' ? { maxSelections } : {}),
       ...(cards ? { cards } : {}),
     });
   });

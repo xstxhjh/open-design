@@ -298,6 +298,7 @@ function TopTabButton({
   return (
     <button
       role="tab"
+      data-testid={`entry-tab-${value}`}
       aria-selected={current === value}
       className={`entry-tab ${current === value ? 'active' : ''}`}
       onClick={() => onClick(value)}

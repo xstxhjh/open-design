@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import { delimiter } from 'node:path';
 import path from 'node:path';
+import { detectAcpModels } from './acp.js';
 
 const execFileP = promisify(execFile);
 
@@ -28,10 +29,12 @@ const agentCapabilities = new Map();
 //                            and as the fallback for the others.
 //   - `reasoningOptions`   : optional reasoning-effort presets (currently
 //                            only Codex exposes this knob).
-//   - `buildArgs(prompt, imagePaths, extraAllowedDirs, options)` returns
-//     argv for the child process. `options = { model, reasoning }` carries
-//     whatever the user picked in the model menu — agents that don't take a
-//     model flag ignore them.
+//   - `buildArgs(prompt, imagePaths, extraAllowedDirs, options, runtimeContext)`
+//     returns argv for the child process. `options = { model, reasoning }`
+//     carries whatever the user picked in the model menu — agents that don't
+//     take a model flag ignore them. `runtimeContext` currently carries
+//     runtime execution details like `{ cwd }` for CLIs that need an explicit
+//     workspace flag in addition to process cwd.
 //
 // Every model list is prefixed with a synthetic `'default'` entry meaning
 // "let the CLI pick" — the agent runs with no `--model` flag, so the
@@ -47,6 +50,9 @@ const agentCapabilities = new Map();
 //   - 'claude-stream-json' : line-delimited JSON emitted by Claude Code's
 //     `--output-format stream-json`. Daemon parses it into typed events
 //     (text / thinking / tool_use / tool_result / status) for the UI.
+//   - 'acp-json-rpc'       : ACP JSON-RPC over stdio. Daemon drives the
+//     initialize/session/new/session/prompt lifecycle and maps updates into
+//     typed UI events.
 //   - 'plain' (default)    : raw text, forwarded chunk-by-chunk.
 //
 // Permission posture: the daemon spawns each CLI with cwd pinned to the
@@ -155,12 +161,12 @@ export const AGENT_DEFS = [
       { id: 'high', label: 'High' },
     ],
     // Prompt delivered via stdin (`codex exec -`) to avoid Windows
-    // `spawn ENAMETOOLONG` — CreateProcess caps argv at ~32 KB and the
-    // composed prompt easily exceeds that. `--full-auto` keeps Codex in
-    // its workspace-write sandbox while skipping interactive permission
-    // prompts in the no-TTY web UI.
-    buildArgs: (_prompt, _imagePaths, _extra, options = {}) => {
-      const args = ['exec', '--full-auto'];
+    // `spawn ENAMETOOLONG` while keeping Codex on its structured JSON stream.
+    buildArgs: (_prompt, _imagePaths, _extra, options = {}, runtimeContext = {}) => {
+      const args = ['exec', '--json', '--skip-git-repo-check', '--full-auto'];
+      if (runtimeContext.cwd) {
+        args.push('-C', runtimeContext.cwd);
+      }
       if (options.model && options.model !== 'default') {
         args.push('--model', options.model);
       }
@@ -173,7 +179,8 @@ export const AGENT_DEFS = [
       return args;
     },
     promptViaStdin: true,
-    streamFormat: 'plain',
+    streamFormat: 'json-event-stream',
+    eventParser: 'codex',
   },
   {
     id: 'gemini',
@@ -190,14 +197,15 @@ export const AGENT_DEFS = [
     // Windows (CreateProcess limit ~32 KB) for any non-trivial prompt.
     // `--yolo` skips interactive approval prompts in the no-TTY web UI.
     buildArgs: (_prompt, _imagePaths, _extra, options = {}) => {
-      const args = ['--yolo'];
+      const args = ['--output-format', 'stream-json', '--skip-trust', '--yolo'];
       if (options.model && options.model !== 'default') {
         args.push('--model', options.model);
       }
       return args;
     },
     promptViaStdin: true,
-    streamFormat: 'plain',
+    streamFormat: 'json-event-stream',
+    eventParser: 'gemini',
   },
   {
     id: 'opencode',
@@ -217,9 +225,9 @@ export const AGENT_DEFS = [
       { id: 'google/gemini-2.5-pro', label: 'google/gemini-2.5-pro' },
     ],
     // Prompt delivered via stdin (`opencode run -`) to avoid Windows
-    // `spawn ENAMETOOLONG` for large composed prompts.
+    // `spawn ENAMETOOLONG` while preserving OpenCode's structured stream.
     buildArgs: (_prompt, _imagePaths, _extra, options = {}) => {
-      const args = ['run'];
+      const args = ['run', '--format', 'json', '--dangerously-skip-permissions'];
       if (options.model && options.model !== 'default') {
         args.push('--model', options.model);
       }
@@ -227,7 +235,53 @@ export const AGENT_DEFS = [
       return args;
     },
     promptViaStdin: true,
-    streamFormat: 'plain',
+    streamFormat: 'json-event-stream',
+    eventParser: 'opencode',
+  },
+  {
+    id: 'hermes',
+    name: 'Hermes',
+    bin: 'hermes',
+    versionArgs: ['--version'],
+    fetchModels: async (resolvedBin) =>
+      detectAcpModels({
+        bin: resolvedBin,
+        args: ['acp', '--accept-hooks'],
+        timeoutMs: 15_000,
+        defaultModelOption: DEFAULT_MODEL_OPTION,
+      }),
+    fallbackModels: [
+      DEFAULT_MODEL_OPTION,
+      { id: 'openai-codex:gpt-5.5', label: 'gpt-5.5 (openai-codex:gpt-5.5)' },
+      { id: 'openai-codex:gpt-5.4', label: 'gpt-5.4 (openai-codex:gpt-5.4)' },
+      {
+        id: 'openai-codex:gpt-5.4-mini',
+        label: 'gpt-5.4-mini (openai-codex:gpt-5.4-mini)',
+      },
+    ],
+    buildArgs: () => ['acp', '--accept-hooks'],
+    streamFormat: 'acp-json-rpc',
+  },
+  {
+    id: 'kimi',
+    name: 'Kimi CLI',
+    bin: 'kimi',
+    versionArgs: ['--version'],
+    fetchModels: async (resolvedBin) =>
+      detectAcpModels({
+        bin: resolvedBin,
+        args: ['acp'],
+        timeoutMs: 15_000,
+        defaultModelOption: DEFAULT_MODEL_OPTION,
+      }),
+    fallbackModels: [
+      DEFAULT_MODEL_OPTION,
+      { id: 'kimi-k2-turbo-preview', label: 'kimi-k2-turbo-preview' },
+      { id: 'moonshot-v1-8k', label: 'moonshot-v1-8k' },
+      { id: 'moonshot-v1-32k', label: 'moonshot-v1-32k' },
+    ],
+    buildArgs: () => ['acp'],
+    streamFormat: 'acp-json-rpc',
   },
   {
     id: 'cursor-agent',
@@ -254,10 +308,13 @@ export const AGENT_DEFS = [
       { id: 'gpt-5', label: 'gpt-5' },
     ],
     // Prompt delivered via stdin (`cursor-agent -`) to avoid Windows
-    // `spawn ENAMETOOLONG` for large composed prompts. `--force` skips
-    // interactive approval prompts in the no-TTY web UI.
-    buildArgs: (_prompt, _imagePaths, _extra, options = {}) => {
-      const args = ['--force'];
+    // `spawn ENAMETOOLONG` while preserving Cursor Agent's structured stream.
+    buildArgs: (_prompt, _imagePaths, _extra, options = {}, runtimeContext = {}) => {
+      const args = [];
+      args.push('--print', '--output-format', 'stream-json', '--stream-partial-output', '--force', '--trust');
+      if (runtimeContext.cwd) {
+        args.push('--workspace', runtimeContext.cwd);
+      }
       if (options.model && options.model !== 'default') {
         args.push('--model', options.model);
       }
@@ -265,7 +322,8 @@ export const AGENT_DEFS = [
       return args;
     },
     promptViaStdin: true,
-    streamFormat: 'plain',
+    streamFormat: 'json-event-stream',
+    eventParser: 'cursor-agent',
   },
   {
     id: 'qwen',
@@ -356,6 +414,15 @@ export function resolveOnPath(bin) {
 }
 
 async function fetchModels(def, resolvedBin) {
+  if (typeof def.fetchModels === 'function') {
+    try {
+      const parsed = await def.fetchModels(resolvedBin);
+      if (!parsed || parsed.length === 0) return def.fallbackModels;
+      return parsed;
+    } catch {
+      return def.fallbackModels;
+    }
+  }
   if (!def.listModels) return def.fallbackModels;
   try {
     const { stdout } = await execFileP(resolvedBin, def.listModels.args, {
@@ -426,7 +493,15 @@ function stripFns(def) {
   // populated separately by `fetchModels`, so we strip the static
   // `fallbackModels` slot here too. `helpArgs` / `capabilityFlags` are
   // probe-only metadata and shouldn't bleed into the API response either.
-  const { buildArgs, listModels, fallbackModels, helpArgs, capabilityFlags, ...rest } = def;
+  const {
+    buildArgs,
+    listModels,
+    fetchModels,
+    fallbackModels,
+    helpArgs,
+    capabilityFlags,
+    ...rest
+  } = def;
   return rest;
 }
 

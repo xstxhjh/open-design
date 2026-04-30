@@ -30,12 +30,12 @@
 git clone https://github.com/nexu-io/open-design.git
 cd open-design
 pnpm install              # 或 npm install
-pnpm dev:all              # daemon (:7456) + Vite (:5173)
+pnpm dev:all              # daemon (:7456) + Next dev (:3000)
 pnpm typecheck            # tsc -b --noEmit
 pnpm build                # 生产构建
 ```
 
-要求 Node 18+。macOS、Linux、WSL2 每天都在跑。Windows 原生应该能跑但不是主要目标 —— 跑不起来请开 issue。
+要求 Node 20.9+ 且 <23。macOS、Linux、WSL2 每天都在跑。Windows 原生应该能跑但不是主要目标 —— 跑不起来请开 issue。
 
 **开发 OD 本身不需要在 `PATH` 上装任何 agent CLI** —— daemon 会告诉你「找不到 agent」并落到 **Anthropic API · BYOK** 路径，反而是最快的开发循环。
 
@@ -246,7 +246,7 @@ design-systems/your-brand/
 为了保持项目聚焦，请不要发以下类型的 PR：
 
 - **Vendor 一个模型运行时。** OD 整个赌注就是「你已有的 CLI 就够了」。我们不带 `pi-ai`、不带 OpenAI key、不带模型加载器。
-- **给前端加一个新框架。** Vite + React 18 + TS 是底线。不要 Next.js / Astro / Solid / Svelte 改写。
+- **未经讨论不要把前端重写到别的栈。** Next.js 16 App Router + React 18 + TS 是当前底线。不要随手改成 Astro / Solid / Svelte 或其他框架。
 - **把 daemon 换成 serverless function。** Daemon 的存在意义就是拥有真实的 `cwd` 和 spawn 真实的 CLI。SPA 部署 Vercel 没问题，daemon 仍然是 daemon。
 - **加 telemetry / 分析 / phone-home。** OD 是 local-first。唯一的对外请求是用户明确配置的 provider。
 - **打包二进制** 而没有附 license 文件和原作者归属。

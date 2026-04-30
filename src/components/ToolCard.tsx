@@ -6,6 +6,7 @@
  */
 import { useState } from 'react';
 import { useT } from '../i18n';
+import { parseTodoWriteInput } from '../runtime/todos';
 import type { AgentEvent } from '../types';
 
 interface Props {
@@ -65,15 +66,9 @@ function OpenInTabButton({ filePath, ctx }: { filePath: string; ctx: FileToolCtx
   );
 }
 
-interface TodoItem {
-  content: string;
-  status: 'pending' | 'in_progress' | 'completed';
-  activeForm?: string;
-}
-
 function TodoCard({ input }: { input: unknown }) {
   const t = useT();
-  const todos = parseTodos(input);
+  const todos = parseTodoWriteInput(input);
   if (todos.length === 0) return <GenericCard name="TodoWrite" input={input} />;
   const done = todos.filter((todo) => todo.status === 'completed').length;
   return (
@@ -308,28 +303,6 @@ function ResultBadge({ result }: { result?: Props['result'] }) {
   if (!result) return <span className="op-status op-status-running">{t('tool.running')}</span>;
   if (result.isError) return <span className="op-status op-status-error">{t('tool.error')}</span>;
   return <span className="op-status op-status-ok">{t('tool.done')}</span>;
-}
-
-function parseTodos(input: unknown): TodoItem[] {
-  if (!input || typeof input !== 'object') return [];
-  const obj = input as { todos?: unknown };
-  if (!Array.isArray(obj.todos)) return [];
-  return obj.todos
-    .map((t): TodoItem | null => {
-      if (!t || typeof t !== 'object') return null;
-      const r = t as Record<string, unknown>;
-      const content = typeof r.content === 'string' ? r.content : '';
-      if (!content) return null;
-      const status = (r.status === 'completed' || r.status === 'in_progress')
-        ? r.status
-        : 'pending';
-      return {
-        content,
-        status,
-        activeForm: typeof r.activeForm === 'string' ? r.activeForm : undefined,
-      };
-    })
-    .filter((x): x is TodoItem => x !== null);
 }
 
 function describeInput(input: unknown): string {

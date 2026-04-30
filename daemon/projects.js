@@ -8,6 +8,11 @@
 
 import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  inferLegacyManifest,
+  parsePersistedManifest,
+  validateArtifactManifestInput,
+} from './artifact-manifest.js';
 
 const FORBIDDEN_SEGMENT = /^$|^\.\.?$/;
 
@@ -48,7 +53,9 @@ async function collectFiles(dir, relDir, out) {
       continue;
     }
     if (!e.isFile()) continue;
+    if (e.name.endsWith('.artifact.json')) continue;
     const st = await stat(full);
+    const manifest = await readManifestForPath(dir, rel);
     out.push({
       name: rel,
       path: rel,
@@ -57,6 +64,8 @@ async function collectFiles(dir, relDir, out) {
       mtime: st.mtimeMs,
       kind: kindFor(rel),
       mime: mimeFor(rel),
+      artifactKind: manifest?.kind,
+      artifactManifest: manifest,
     });
   }
 }
@@ -67,6 +76,7 @@ export async function readProjectFile(projectsRoot, projectId, name) {
   const buf = await readFile(file);
   const st = await stat(file);
   const rel = toProjectPath(path.relative(dir, file));
+  const manifest = await readManifestForPath(dir, rel);
   return {
     buffer: buf,
     name: rel,
@@ -75,6 +85,8 @@ export async function readProjectFile(projectsRoot, projectId, name) {
     mtime: st.mtimeMs,
     mime: mimeFor(rel),
     kind: kindFor(rel),
+    artifactKind: manifest?.kind,
+    artifactManifest: manifest,
   };
 }
 
@@ -83,7 +95,7 @@ export async function writeProjectFile(
   projectId,
   name,
   body,
-  { overwrite = true } = {},
+  { overwrite = true, artifactManifest = null } = {},
 ) {
   const dir = await ensureProject(projectsRoot, projectId);
   const safeName = sanitizePath(name);
@@ -98,7 +110,17 @@ export async function writeProjectFile(
   }
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, body);
+  if (artifactManifest && typeof artifactManifest === 'object') {
+    const manifestFileName = artifactManifestNameFor(safeName);
+    const manifestTarget = resolveSafe(dir, manifestFileName);
+    const validated = validateArtifactManifestInput(artifactManifest, safeName);
+    if (validated.ok && validated.value) {
+      const nextManifest = validated.value;
+      await writeFile(manifestTarget, JSON.stringify(nextManifest, null, 2));
+    }
+  }
   const st = await stat(target);
+  const persistedManifest = await readManifestForPath(dir, safeName);
   return {
     name: safeName,
     path: safeName,
@@ -106,7 +128,31 @@ export async function writeProjectFile(
     mtime: st.mtimeMs,
     kind: kindFor(safeName),
     mime: mimeFor(safeName),
+    artifactKind: persistedManifest?.kind,
+    artifactManifest: persistedManifest,
   };
+}
+
+function artifactManifestNameFor(name) {
+  return `${name}.artifact.json`;
+}
+
+async function readManifestForPath(projectDirPath, relPath) {
+  const manifestPath = path.join(projectDirPath, artifactManifestNameFor(relPath));
+  try {
+    const raw = await readFile(manifestPath, 'utf8');
+    const parsed = parseManifest(raw);
+    if (parsed) return parsed;
+  } catch (err) {
+    if (!err || err.code !== 'ENOENT') {
+      // ignore malformed/invalid manifests and fallback to inference
+    }
+  }
+  return inferLegacyManifest(relPath);
+}
+
+function parseManifest(raw) {
+  return parsePersistedManifest(raw, '');
 }
 
 export async function deleteProjectFile(projectsRoot, projectId, name) {
@@ -181,6 +227,10 @@ const EXT_MIME = {
   '.json': 'application/json; charset=utf-8',
   '.md': 'text/markdown; charset=utf-8',
   '.txt': 'text/plain; charset=utf-8',
+  '.pdf': 'application/pdf',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -211,5 +261,9 @@ export function kindFor(name) {
   if (['.js', '.mjs', '.cjs', '.ts', '.tsx', '.json', '.css'].includes(ext)) {
     return 'code';
   }
+  if (ext === '.pdf') return 'pdf';
+  if (ext === '.docx') return 'document';
+  if (ext === '.pptx') return 'presentation';
+  if (ext === '.xlsx') return 'spreadsheet';
   return 'binary';
 }

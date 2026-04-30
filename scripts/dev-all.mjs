@@ -1,75 +1,63 @@
 #!/usr/bin/env node
 // Launcher for `npm run dev:all`.
 //
-// Probes for free ports for the daemon (OD_PORT, default 7456) and the Vite
-// dev server (VITE_PORT, default 5173) before spawning `concurrently`, so a
-// stray process holding either port doesn't kill the whole boot. The
-// resolved ports are exported into the child env, which means:
+// Probes for free ports for the daemon (OD_PORT, default 7456) and the
+// Next.js dev server (NEXT_PORT, default 3000) before spawning
+// `concurrently`, so a stray process holding either port doesn't kill the
+// whole boot. The resolved ports are exported into the child env, which
+// means:
 //   * the daemon's cli.js sees the new OD_PORT and binds to it
-//   * vite.config.ts reads the same OD_PORT and points its /api proxy at
-//     the daemon's actual port
-//   * Vite itself binds to VITE_PORT
+//   * next.config.ts reads the same OD_PORT and proxies /api, /artifacts,
+//     /frames to the daemon's actual port
+//   * Next.js binds to NEXT_PORT (we pass `next dev -p $NEXT_PORT` so the
+//     `dev` script can stay parameter-free for the common single-process
+//     case where the user runs just `pnpm dev`)
 //
 // If a port is busy we walk forward up to PORT_SEARCH_RANGE steps and log
 // the switch so the user notices.
 
 import { spawn } from 'node:child_process';
-import net from 'node:net';
-
-const HOST = '127.0.0.1';
-const PORT_SEARCH_RANGE = 50;
-
-function isPortFree(port, host = HOST) {
-  return new Promise((resolve) => {
-    const server = net.createServer();
-    server.unref();
-    server.once('error', () => resolve(false));
-    server.listen({ port, host, exclusive: true }, () => {
-      server.close(() => resolve(true));
-    });
-  });
-}
-
-async function findFreePort(start, label) {
-  for (let port = start; port < start + PORT_SEARCH_RANGE; port++) {
-    if (await isPortFree(port)) return port;
-  }
-  throw new Error(
-    `[dev:all] could not find a free ${label} port near ${start} (tried ${PORT_SEARCH_RANGE})`,
-  );
-}
+import { findFreePort } from './resolve-dev-ports.mjs';
 
 const desiredDaemon = Number(process.env.OD_PORT) || 7456;
-const desiredVite = Number(process.env.VITE_PORT) || 5173;
+const desiredNext = Number(process.env.NEXT_PORT) || 3000;
+const strictDaemonPort = process.env.OD_PORT_STRICT === '1';
+const strictNextPort = process.env.NEXT_PORT_STRICT === '1';
 
-const daemonPort = await findFreePort(desiredDaemon, 'daemon');
-const vitePort = await findFreePort(desiredVite, 'vite');
+const daemonPort = strictDaemonPort
+  ? desiredDaemon
+  : await findFreePort(desiredDaemon, 'daemon');
+const nextPort = strictNextPort
+  ? desiredNext
+  : await findFreePort(desiredNext, 'next');
 
 if (daemonPort !== desiredDaemon) {
   console.log(
     `[dev:all] daemon port ${desiredDaemon} is busy, switching to ${daemonPort}`,
   );
 }
-if (vitePort !== desiredVite) {
+if (nextPort !== desiredNext) {
   console.log(
-    `[dev:all] vite port ${desiredVite} is busy, switching to ${vitePort}`,
+    `[dev:all] next port ${desiredNext} is busy, switching to ${nextPort}`,
   );
 }
 
 const env = {
   ...process.env,
   OD_PORT: String(daemonPort),
-  VITE_PORT: String(vitePort),
+  NEXT_PORT: String(nextPort),
+  PORT: String(nextPort),
 };
 
-// We spawn the local `concurrently` bin via shell so Windows .cmd shims
-// resolve correctly. The `npm:daemon` / `npm:dev` shorthand runs the
-// matching package.json scripts, so any future tweak to those scripts is
-// picked up automatically.
+// `npm:daemon` is the shorthand for the daemon script, and `next dev -p
+// <port>` is invoked directly so we can pass the resolved port without
+// round-tripping through npm scripts. Keep the port numeric before it reaches
+// the command string, and avoid shell interpretation on POSIX; Windows needs
+// shell mode so the local `.cmd` shim can resolve.
 const child = spawn(
   'concurrently',
-  ['-k', '-n', 'daemon,web', '-c', 'cyan,magenta', 'npm:daemon', 'npm:dev'],
-  { env, stdio: 'inherit', shell: true },
+  ['-k', '-n', 'daemon,web', '-c', 'cyan,magenta', 'npm:daemon', `next dev -p ${nextPort}`],
+  { env, stdio: 'inherit', shell: process.platform === 'win32' },
 );
 
 child.on('exit', (code, signal) => {

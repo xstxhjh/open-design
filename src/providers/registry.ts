@@ -7,6 +7,7 @@ import type {
   SkillDetail,
   SkillSummary,
 } from '../types';
+import type { ArtifactManifest } from '../artifacts/types';
 
 export async function fetchAgents(): Promise<AgentInfo[]> {
   try {
@@ -97,6 +98,32 @@ export function projectFileUrl(projectId: string, name: string): string {
   return projectRawUrl(projectId, name);
 }
 
+export interface ProjectFilePreviewSection {
+  title: string;
+  lines: string[];
+}
+
+export interface ProjectFilePreview {
+  kind: 'pdf' | 'document' | 'presentation' | 'spreadsheet';
+  title: string;
+  sections: ProjectFilePreviewSection[];
+}
+
+export async function fetchProjectFilePreview(
+  projectId: string,
+  name: string,
+): Promise<ProjectFilePreview | null> {
+  try {
+    const resp = await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(name)}/preview`,
+    );
+    if (!resp.ok) return null;
+    return (await resp.json()) as ProjectFilePreview;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchProjectFileText(
   projectId: string,
   name: string,
@@ -114,12 +141,13 @@ export async function writeProjectTextFile(
   projectId: string,
   name: string,
   content: string,
+  options?: { artifactManifest?: ArtifactManifest },
 ): Promise<ProjectFile | null> {
   try {
     const resp = await fetch(`/api/projects/${encodeURIComponent(projectId)}/files`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, content }),
+      body: JSON.stringify({ name, content, artifactManifest: options?.artifactManifest }),
     });
     if (!resp.ok) return null;
     const json = (await resp.json()) as { file: ProjectFile };

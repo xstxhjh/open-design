@@ -221,10 +221,10 @@ Every layer is composable. Every layer is a file you can edit. Read [`src/prompt
 ```
 ┌────────────────────────── browser ─────────────────────────────┐
 │                                                                │
-│   Vite + React SPA  (chat · file workspace · iframe preview)   │
+│   Next.js 16 App Router  (chat · file workspace · iframe preview) │
 │                                                                │
 └──────────────┬───────────────────────────────────┬─────────────┘
-               │ /api/* (proxied in dev)           │ direct (BYOK)
+               │ /api/* (rewritten in dev)         │ direct (BYOK)
                ▼                                   ▼
    ┌──────────────────────┐              ┌──────────────────────┐
    │   Local daemon       │              │   Anthropic SDK      │
@@ -247,7 +247,7 @@ Every layer is composable. Every layer is a file you can edit. Read [`src/prompt
 
 | Layer | Stack |
 |---|---|
-| Frontend | Vite 5 + React 18 + TypeScript |
+| Frontend | Next.js 16 App Router + React 18 + TypeScript |
 | Daemon | Node 20–22 · Express · SSE streaming · `better-sqlite3` for projects/conversations/messages/tabs |
 | Agent transport | `child_process.spawn` with typed-event parsers for Claude Code (`claude-stream-json`) and Copilot CLI (`copilot-stream-json`); line-buffered plain stdout for the rest |
 | Storage | Plain files in `.od/projects/<id>/` + SQLite at `.od/db.sqlite` (gitignored) |
@@ -262,8 +262,8 @@ cd open-design
 nvm use              # uses Node 22 from .nvmrc
 corepack enable
 pnpm install
-pnpm dev:all         # daemon (:7456) + Vite (:5173)
-open http://localhost:5173
+pnpm dev:all         # daemon (:7456) + Next dev (:3000)
+open http://localhost:3000
 ```
 
 The first load:
@@ -317,7 +317,12 @@ open-design/
 │   ├── db.js                      ← SQLite schema (projects/messages/templates/tabs)
 │   └── frontmatter.js             ← zero-dep YAML-subset parser
 │
-├── src/                           ← Vite + React + TS frontend
+├── app/                           ← Next.js 16 App Router entrypoints
+│   ├── layout.tsx                 ← root layout shell
+│   ├── page.tsx                   ← main app entry
+│   └── [[...slug]]/page.tsx       ← catch-all client shell for project routes
+│
+├── src/                           ← shared React + TS client modules for Next.js
 │   ├── App.tsx                    ← routing, bootstrap, settings
 │   ├── components/                ← 27 components (chat, composer, picker, preview, sketch, …)
 │   ├── prompts/
@@ -380,6 +385,8 @@ open-design/
 │
 ├── templates/
 │   └── deck-framework.html        ← deck baseline (nav / counter / print)
+│
+├── next.config.ts                 ← dev rewrites + prod static export to out/
 │
 ├── scripts/
 │   └── sync-design-systems.mjs    ← re-import upstream awesome-design-md tarball

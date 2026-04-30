@@ -263,6 +263,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     return (
       <div
         className={`composer${dragActive ? " drag-active" : ""}`}
+        data-testid="chat-composer"
         onDragOver={(e) => {
           e.preventDefault();
           setDragActive(true);
@@ -282,6 +283,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           <div className="composer-input-wrap">
             <textarea
               ref={textareaRef}
+              data-testid="chat-composer-input"
               value={draft}
               placeholder={t('chat.composerPlaceholder')}
               onChange={handleChange}
@@ -304,6 +306,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           <div className="composer-row">
             <input
               ref={fileInputRef}
+              data-testid="chat-file-input"
               type="file"
               multiple
               style={{ display: "none" }}
@@ -324,6 +327,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
             </button>
             <button
               className="icon-btn"
+              data-testid="chat-attach"
               onClick={() => fileInputRef.current?.click()}
               title={t('chat.attachTitle')}
               disabled={uploading}
@@ -383,6 +387,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
               <button
                 type="button"
                 className="composer-send"
+                data-testid="chat-send"
                 onClick={() => void submit()}
                 disabled={!draft.trim()}
               >
@@ -411,7 +416,7 @@ function StagedAttachments({
   t: TranslateFn;
 }) {
   return (
-    <div className="staged-row">
+    <div className="staged-row" data-testid="staged-attachments">
       {attachments.map((a) => (
         <div key={a.path} className={`staged-chip staged-${a.kind}`}>
           {a.kind === "image" && projectId ? (
@@ -478,7 +483,7 @@ function MentionPopover({
     if (ref.current) ref.current.scrollTop = 0;
   }, [files]);
   return (
-    <div className="mention-popover" ref={ref}>
+    <div className="mention-popover" data-testid="mention-popover" ref={ref}>
       {files.map((f) => {
         const key = f.path ?? f.name;
         return (

@@ -1,3 +1,5 @@
+import type { ArtifactKind, ArtifactManifest } from './artifacts/types';
+
 export type ExecMode = 'daemon' | 'api';
 export type ApiProvider = 'anthropic' | 'openai';
 
@@ -42,6 +44,8 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  agentId?: string;
+  agentName?: string;
   events?: AgentEvent[];
   startedAt?: number;
   endedAt?: number;
@@ -151,6 +155,10 @@ export type ProjectFileKind =
   | 'sketch'
   | 'text'
   | 'code'
+  | 'pdf'
+  | 'document'
+  | 'presentation'
+  | 'spreadsheet'
   | 'binary';
 
 export interface ProjectFile {
@@ -168,6 +176,8 @@ export interface ProjectFile {
   mtime: number;
   kind: ProjectFileKind;
   mime: string;
+  artifactKind?: ArtifactKind;
+  artifactManifest?: ArtifactManifest;
 }
 
 // Per-project metadata captured at creation time. The agent reads this

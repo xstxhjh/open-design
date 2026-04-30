@@ -319,7 +319,7 @@ export function FileWorkspace({
   const activeSketch = activeFile && isActiveSketch ? sketches[activeFile.name] : null;
 
   return (
-    <div className="workspace">
+    <div className="workspace" data-testid="file-workspace">
       <div className="ws-tabs-bar" role="tablist" aria-label={t('workspace.designFiles')}>
         <button
           type="button"
@@ -327,6 +327,7 @@ export function FileWorkspace({
           role="tab"
           aria-selected={activeTab === DESIGN_FILES_TAB}
           tabIndex={0}
+          data-testid="design-files-tab"
           onClick={() => setActiveTab(DESIGN_FILES_TAB)}
           title={t('workspace.designFiles')}
         >
@@ -413,6 +414,8 @@ export function FileWorkspace({
         ref={fileInputRef}
         type="file"
         multiple
+        data-testid="design-files-upload-input"
+        accept="image/*"
         style={{ display: 'none' }}
         onChange={handleFilePicked}
       />
@@ -446,7 +449,7 @@ function Tab({
   onActivate: () => void;
   onClose?: () => void;
   closable?: boolean;
-  kind?: 'html' | 'image' | 'sketch' | 'text' | 'code' | 'binary';
+  kind?: ProjectFile['kind'];
 }) {
   const t = useT();
   const iconName = kindIconName(kind);

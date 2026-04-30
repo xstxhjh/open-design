@@ -298,6 +298,7 @@ function ExampleCard({
   return (
     <div
       className="example-card"
+      data-testid={`example-card-${skill.id}`}
       onMouseEnter={() => {
         setHovered(true);
         onLoad();
@@ -355,7 +356,11 @@ function ExampleCard({
             : skill.description.replace(/\s+/g, ' ').slice(0, 240)}
         </div>
         <div className="example-card-actions">
-          <button className="primary example-cta" onClick={onUsePrompt}>
+          <button
+            className="primary example-cta"
+            data-testid={`example-use-prompt-${skill.id}`}
+            onClick={onUsePrompt}
+          >
             {t('examples.usePrompt')}
           </button>
           <button

@@ -15,11 +15,14 @@ import {
 } from './agents.js';
 import { listSkills } from './skills.js';
 import { listDesignSystems, readDesignSystem } from './design-systems.js';
+import { attachAcpSession } from './acp.js';
 import { createClaudeStreamHandler } from './claude-stream.js';
 import { createCopilotStreamHandler } from './copilot-stream.js';
+import { createJsonEventStreamHandler } from './json-event-stream.js';
 import { renderDesignSystemPreview } from './design-system-preview.js';
 import { renderDesignSystemShowcase } from './design-system-showcase.js';
 import { importClaudeDesignZip } from './claude-design-import.js';
+import { buildDocumentPreview } from './document-preview.js';
 import { lintArtifact, renderFindingsForAgent } from './lint-artifact.js';
 import {
   deleteProjectFile,
@@ -31,6 +34,7 @@ import {
   sanitizeName,
   writeProjectFile,
 } from './projects.js';
+import { validateArtifactManifestInput } from './artifact-manifest.js';
 import {
   deleteConversation,
   deleteProject as dbDeleteProject,
@@ -56,12 +60,29 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '..');
-const STATIC_DIR = path.join(PROJECT_ROOT, 'dist');
+// Built web app lives in `out/` — that's where Next.js writes the static
+// export configured in next.config.ts. The folder name used to be `dist/`
+// when this project shipped with Vite; the daemon serves whatever the
+// frontend toolchain emits, no further config needed.
+const STATIC_DIR = path.join(PROJECT_ROOT, 'out');
 const SKILLS_DIR = path.join(PROJECT_ROOT, 'skills');
 const DESIGN_SYSTEMS_DIR = path.join(PROJECT_ROOT, 'design-systems');
-const ARTIFACTS_DIR = path.join(PROJECT_ROOT, '.od', 'artifacts');
-const PROJECTS_DIR = path.join(PROJECT_ROOT, '.od', 'projects');
+const RUNTIME_DATA_DIR = process.env.OD_DATA_DIR
+  ? path.resolve(process.env.OD_DATA_DIR)
+  : path.join(PROJECT_ROOT, '.od');
+const ARTIFACTS_DIR = path.join(RUNTIME_DATA_DIR, 'artifacts');
+const PROJECTS_DIR = path.join(RUNTIME_DATA_DIR, 'projects');
 fs.mkdirSync(PROJECTS_DIR, { recursive: true });
+
+// Windows ENAMETOOLONG mitigation constants
+const CMD_BAT_RE = /\.(cmd|bat)$/i;
+const PROMPT_TEMP_FILE = () =>
+  '.od-prompt-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '.md';
+const promptFileBootstrap = (fp) =>
+  `Read the file at ${fp.replace(/\\/g, '/')} for your complete instructions ` +
+  '(system prompt, design system, skill workflow, and user request). ' +
+  'Follow every instruction in that file exactly. ' +
+  'Do not begin your response until you have read the entire file.';
 
 const UPLOAD_DIR = path.join(os.tmpdir(), 'od-uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -156,10 +177,10 @@ function sendMulterError(res, err) {
   return res.status(500).json({ code: 'UPLOAD_ERROR', error: 'upload failed' });
 }
 
-export async function startServer({ port = 7456 } = {}) {
+export async function startServer({ port = 7456, returnServer = false } = {}) {
   const app = express();
   app.use(express.json({ limit: '4mb' }));
-  const db = openDatabase(PROJECT_ROOT);
+  const db = openDatabase(PROJECT_ROOT, { dataDir: RUNTIME_DATA_DIR });
 
   // Warm agent-capability probes (e.g. whether the installed Claude Code
   // build advertises --include-partial-messages) so the first /api/chat
@@ -731,6 +752,17 @@ export async function startServer({ port = 7456 } = {}) {
     }
   });
 
+  app.get('/api/projects/:id/files/:name/preview', async (req, res) => {
+    try {
+      const file = await readProjectFile(PROJECTS_DIR, req.params.id, req.params.name);
+      const preview = await buildDocumentPreview(file);
+      res.json(preview);
+    } catch (err) {
+      const status = err && err.statusCode ? err.statusCode : err && err.code === 'ENOENT' ? 404 : 400;
+      res.status(status).json({ error: err?.message || 'preview unavailable' });
+    }
+  });
+
   app.get('/api/projects/:id/files/:name', async (req, res) => {
     try {
       const file = await readProjectFile(PROJECTS_DIR, req.params.id, req.params.name);
@@ -767,15 +799,23 @@ export async function startServer({ port = 7456 } = {}) {
           fs.promises.unlink(req.file.path).catch(() => {});
           return res.json({ file: meta });
         }
-        const { name, content, encoding } = req.body || {};
+        const { name, content, encoding, artifactManifest } = req.body || {};
         if (typeof name !== 'string' || typeof content !== 'string') {
           return res.status(400).json({ error: 'name and content required' });
+        }
+        if (artifactManifest !== undefined && artifactManifest !== null) {
+          const validated = validateArtifactManifestInput(artifactManifest, name);
+          if (!validated.ok) {
+            return res.status(400).json({ error: `invalid artifactManifest: ${validated.error}` });
+          }
         }
         const buf =
           encoding === 'base64'
             ? Buffer.from(content, 'base64')
             : Buffer.from(content, 'utf8');
-        const meta = await writeProjectFile(PROJECTS_DIR, req.params.id, name, buf);
+        const meta = await writeProjectFile(PROJECTS_DIR, req.params.id, name, buf, {
+          artifactManifest,
+        });
         res.json({ file: meta });
       } catch (err) {
         res.status(500).json({ error: 'upload failed' });
@@ -940,7 +980,57 @@ export async function startServer({ port = 7456 } = {}) {
         ? def.reasoningOptions.find((r) => r.id === reasoning)?.id ?? null
         : null;
     const agentOptions = { model: safeModel, reasoning: safeReasoning };
-    const args = def.buildArgs(composed, safeImages, extraAllowedDirs, agentOptions);
+
+    // Windows ENAMETOOLONG mitigation.  On Windows the OS caps the command
+    // line passed to child_process.spawn: ~8 191 chars when shell:true is
+    // needed (.cmd/.bat npm shims) and ~32 767 chars otherwise (CreateProcess).
+    // The composed prompt (system prompt + design system + skill body + user
+    // message) can exceed either limit.  Agents with `promptViaStdin` bypass
+    // this by piping through stdin.  For the remaining agents we write the
+    // prompt to a temp file in the project directory and pass a short
+    // bootstrap message that tells the agent to Read it before responding.
+    const resolvedBin = resolveAgentBin(agentId);
+    const isWinShell = process.platform === 'win32' && resolvedBin && CMD_BAT_RE.test(resolvedBin);
+    // Thresholds account for escaping overhead (~1.1-1.3x for cmd.exe shell)
+    // plus other args (~500 chars).  6500 chars for shell:true, 30000 for
+    // direct CreateProcess.
+    const promptLimit = isWinShell ? 6500 : 30000;
+    const needsFilePrompt =
+      !def.promptViaStdin &&
+      process.platform === 'win32' &&
+      composed.length > promptLimit &&
+      cwd;
+    if (process.platform === 'win32') {
+      console.log(
+        `[od] prompt-delivery: agent=${agentId} promptLen=${composed.length} ` +
+        `shell=${isWinShell} limit=${promptLimit} file=${!!needsFilePrompt} ` +
+        `bin=${resolvedBin ? path.basename(resolvedBin) : 'null'}`,
+      );
+    }
+    let effectivePrompt = composed;
+    let promptFilePath = null;
+    let promptFileCleaned = false;
+    const cleanPromptFile = () => {
+      if (promptFilePath && !promptFileCleaned) {
+        promptFileCleaned = true;
+        fs.unlink(promptFilePath, () => {});
+      }
+    };
+    // ^^^ idempotency: promptFileCleaned is set synchronously BEFORE the
+    // async fs.unlink callback, so a second call never races past the guard.
+    if (needsFilePrompt) {
+      promptFilePath = path.join(cwd, PROMPT_TEMP_FILE);
+      try {
+        fs.writeFileSync(promptFilePath, composed, 'utf8');
+        effectivePrompt = promptFileBootstrap(promptFilePath);
+        console.log(`[od] wrote prompt to ${promptFilePath}`);
+      } catch (err) {
+        console.error(`[od] failed to write prompt file: ${err.message}`);
+        promptFilePath = null;
+      }
+    }
+
+    const args = def.buildArgs(effectivePrompt, safeImages, extraAllowedDirs, agentOptions, { cwd });
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -953,17 +1043,13 @@ export async function startServer({ port = 7456 } = {}) {
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
-    // Resolve the agent's bin to its absolute path. Detection (`/api/agents`)
-    // already locates the executable via PATH, but spawning the bare name here
-    // fails on Windows (ENOENT) when the child process's PATH doesn't contain
-    // the user's npm-global / shim directory — see issue #10.
-    //
+    // resolvedBin was already looked up above for the ENAMETOOLONG check.
     // If detection can't find the binary, surface a friendly SSE error
     // pointing at /api/agents instead of silently falling back to
     // spawn(def.bin) — that fallback re-introduces the exact ENOENT symptom
     // from issue #10 the rest of this block is meant to prevent.
-    const resolvedBin = resolveAgentBin(agentId);
     if (!resolvedBin) {
+      cleanPromptFile();
       send('error', {
         message:
           `Agent "${def.name}" (\`${def.bin}\`) is not installed or not on PATH. ` +
@@ -996,7 +1082,7 @@ export async function startServer({ port = 7456 } = {}) {
     // In practice npm-installed CLIs ship as `.cmd` shims, which is the
     // case this branch covers.
     const useShell =
-      process.platform === 'win32' && /\.(cmd|bat)$/i.test(resolvedBin);
+      process.platform === 'win32' && CMD_BAT_RE.test(resolvedBin);
 
     send('start', {
       agentId,
@@ -1009,12 +1095,13 @@ export async function startServer({ port = 7456 } = {}) {
     });
 
     let child;
+    let acpSession = null;
     try {
       // When the agent definition sets `promptViaStdin`, pipe the composed
       // prompt through stdin instead of embedding it in argv. Bypasses the
       // OS command-line length limit (Windows CreateProcess caps at ~32 KB)
       // which causes `spawn ENAMETOOLONG` for any non-trivial prompt.
-      const stdinMode = def.promptViaStdin ? 'pipe' : 'ignore';
+      const stdinMode = def.promptViaStdin || def.streamFormat === 'acp-json-rpc' ? 'pipe' : 'ignore';
       child = spawn(resolvedBin, args, {
         env: { ...process.env },
         stdio: [stdinMode, 'pipe', 'pipe'],
@@ -1034,6 +1121,7 @@ export async function startServer({ port = 7456 } = {}) {
         child.stdin.end(composed, 'utf8');
       }
     } catch (err) {
+      cleanPromptFile();
       send('error', { message: `spawn failed: ${err.message}` });
       return res.end();
     }
@@ -1053,6 +1141,20 @@ export async function startServer({ port = 7456 } = {}) {
       const copilot = createCopilotStreamHandler((ev) => send('agent', ev));
       child.stdout.on('data', (chunk) => copilot.feed(chunk));
       child.on('close', () => copilot.flush());
+    } else if (def.streamFormat === 'acp-json-rpc') {
+      acpSession = attachAcpSession({
+        child,
+        prompt: composed,
+        cwd: cwd || PROJECT_ROOT,
+        model: safeModel,
+        send,
+      });
+    } else if (def.streamFormat === 'json-event-stream') {
+      const handler = createJsonEventStreamHandler(def.eventParser || def.id, (ev) =>
+        send('agent', ev),
+      );
+      child.stdout.on('data', (chunk) => handler.feed(chunk));
+      child.on('close', () => handler.flush());
     } else {
       child.stdout.on('data', (chunk) => send('stdout', { chunk }));
     }
@@ -1070,21 +1172,36 @@ export async function startServer({ port = 7456 } = {}) {
       res.end();
     });
     child.on('close', (code, signal) => {
+      if (acpSession?.hasFatalError()) {
+        return res.end();
+      }
+      cleanPromptFile();
       send('end', { code, signal });
       res.end();
     });
   });
 
   // SPA fallback for the built web app. Put this LAST so it never shadows
-  // /api routes. Only active when a dist/ exists (production mode).
+  // /api routes. Only active when out/ exists (production mode).
+  //
+  // Next.js's static export writes a single shell HTML at out/index.html
+  // for the optional catch-all route (`app/[[...slug]]/page.tsx`); project
+  // IDs aren't pre-rendered, so any unknown deep link (e.g. /projects/abc)
+  // needs to fall back to that shell so the client router can pick the
+  // right view at runtime.
   if (fs.existsSync(STATIC_DIR)) {
-    app.get(/^\/(?!api\/|artifacts\/).*/, (_req, res) => {
+    app.get(/^\/(?!api\/|artifacts\/|frames\/).*/, (_req, res) => {
       res.sendFile(path.join(STATIC_DIR, 'index.html'));
     });
   }
 
   return new Promise((resolve) => {
-    app.listen(port, '127.0.0.1', () => resolve(`http://localhost:${port}`));
+    const server = app.listen(port, '127.0.0.1', () => {
+      const address = server.address();
+      const actualPort = typeof address === 'object' && address ? address.port : port;
+      const url = `http://127.0.0.1:${actualPort}`;
+      resolve(returnServer ? { url, server } : url);
+    });
   });
 }
 
