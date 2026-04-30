@@ -298,6 +298,28 @@ export function SettingsDialog({
                 <h3>{t('settings.apiSection')}</h3>
               </div>
               <label className="field">
+                <span className="field-label">{t('settings.provider')}</span>
+                <select
+                  value={cfg.provider || 'anthropic'}
+                  onChange={(e) => {
+                    const provider = e.target.value as ApiProvider;
+                    setCfg((c) => ({
+                      ...c,
+                      provider,
+                      baseUrl:
+                        provider === 'anthropic'
+                          ? 'https://api.anthropic.com'
+                          : c.baseUrl === 'https://api.anthropic.com'
+                            ? ''
+                            : c.baseUrl,
+                    }));
+                  }}
+                >
+                  <option value="anthropic">{t('settings.providerAnthropic')}</option>
+                  <option value="openai">{t('settings.providerOpenai')}</option>
+                </select>
+              </label>
+              <label className="field">
                 <span className="field-label">{t('settings.apiKey')}</span>
                 <div className="field-row">
                   <input
